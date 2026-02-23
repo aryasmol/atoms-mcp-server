@@ -1,0 +1,45 @@
+{
+  "name": "@developer-smallestai/atoms-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for the Atoms platform — query call logs, agents, usage stats from your IDE",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aryasmol/atoms-mcp-server.git"
+  },
+  "keywords": [
+    "mcp",
+    "atoms",
+    "voice-agent",
+    "ai-agent",
+    "smallest"
+  ],
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "atoms-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\" --packages=external",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@repo/atoms-types": "*",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.5",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

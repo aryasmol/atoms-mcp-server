@@ -1,0 +1,124 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+import { atomsApi, formatApiError } from "../api.js";
+import type { IAgentDTO, ICallCountsLogEntry } from "../types.js";
+
+export function registerGetCallLogs(server: McpServer) {
+  server.registerTool(
+    "get_call_logs",
+    {
+      description:
+        "Get call logs for your organization. Filter by status, type, date range, agent name, or phone number. Returns call metadata, duration, cost, errors, and transcript summary.",
+      inputSchema: {
+        call_status: z
+          .enum(["pending", "in_queue", "active", "completed", "failed", "no_answer", "busy", "cancelled"])
+          .optional()
+          .describe("Filter by call status"),
+        call_type: z
+          .enum(["telephony_inbound", "telephony_outbound", "webcall", "chat"])
+          .optional()
+          .describe("Filter by call type"),
+        agent_name: z.string().optional().describe("Filter by agent name (partial match, case-insensitive)"),
+        phone_number: z
+          .string()
+          .optional()
+          .describe("Filter by phone number (matches fromNumber or toNumber or userNumber)"),
+        start_date: z.string().optional().describe("Start date filter (ISO 8601, e.g. 2025-01-15)"),
+        end_date: z.string().optional().describe("End date filter (ISO 8601, e.g. 2025-01-20)"),
+        has_errors: z.boolean().optional().describe("If true, only return calls that have errors"),
+        limit: z.number().default(20).describe("Max results to return (default 20, max 100)"),
+      },
+    },
+    async (params) => {
+      const limit = Math.min(params.limit, 100);
+
+      // If filtering by agent name, first resolve the agent ID
+      let agentId: string | undefined;
+      if (params.agent_name) {
+        const agentsResult = await atomsApi(
+          "GET",
+          `/agent?page=1&offset=5&search=${encodeURIComponent(params.agent_name)}`
+        );
+        if (!agentsResult.ok) {
+          return { content: [{ type: "text" as const, text: formatApiError(agentsResult) }] };
+        }
+        const agents = (agentsResult.data?.data?.agents ?? []) as IAgentDTO[];
+        if (agents.length === 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `No agents found matching "${params.agent_name}" in your organization.`,
+              },
+            ],
+          };
+        }
+        agentId = agents[0]._id;
+      }
+
+      // Use the analytics call-counts-log endpoint for filtered call logs
+      const queryParams = new URLSearchParams({
+        page: "1",
+        limit: String(limit),
+      });
+
+      if (agentId) queryParams.set("agentId", agentId);
+      if (params.call_status) queryParams.set("callStatus", params.call_status);
+      if (params.call_type) queryParams.set("callType", params.call_type);
+      if (params.start_date) queryParams.set("dateFrom", params.start_date);
+      if (params.end_date) queryParams.set("dateTo", params.end_date);
+
+      const result = await atomsApi("GET", `/analytics/call-counts-log?${queryParams.toString()}`);
+
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+      }
+
+      const data = result.data?.data ?? result.data;
+      let calls = (data?.calls ?? []) as ICallCountsLogEntry[];
+
+      // Apply client-side filters not supported by the API
+      if (params.phone_number) {
+        const phone = params.phone_number;
+        calls = calls.filter((c) => c.fromNumber?.includes(phone) || c.toNumber?.includes(phone));
+      }
+
+      if (params.has_errors) {
+        calls = calls.filter((c) => c.callStatus === "failed" || c.disconnectionReason !== "-");
+      }
+
+      const enrichedLogs = calls.map((call) => ({
+        callId: call.callId,
+        callType: call.callType,
+        callStatus: call.callStatus,
+        callDurationMs: call.callDurationMs,
+        costSpent: call.costSpent,
+        fromNumber: call.fromNumber,
+        toNumber: call.toNumber,
+        agentName: call.agentName,
+        campaignName: call.campaignName,
+        disconnectionReason: call.disconnectionReason,
+        timestamp: call.timestamp,
+        recordingUrl: call.recordingUrl,
+      }));
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                total: data?.totalCount ?? enrichedLogs.length,
+                returned: enrichedLogs.length,
+                logs: enrichedLogs,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+}
